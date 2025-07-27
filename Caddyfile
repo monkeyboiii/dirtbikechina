@@ -1,0 +1,9 @@
+www.dirtbikechina.com {
+    reverse_proxy wordpress:80
+}
+dbadmin.dirtbikechina.com {
+    reverse_proxy phpmyadmin:80
+}
+forum.dirtbikechina.com {
+    reverse_proxy unix//sock/nginx.http.sock
+}
