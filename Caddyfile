@@ -1,9 +1,21 @@
 www.dirtbikechina.com {
-    reverse_proxy wordpress:80
+	reverse_proxy wordpress:80
 }
 dbadmin.dirtbikechina.com {
-    reverse_proxy phpmyadmin:80
+	basicauth {
+		{$CADDY_ADMIN} {$CADDY_PASSWORD}
+	}
+	reverse_proxy phpmyadmin:80
 }
 forum.dirtbikechina.com {
-    reverse_proxy unix//sock/nginx.http.sock
+	reverse_proxy unix//sock/nginx.http.sock
+}
+trails.dirtbikechina.com {
+	reverse_proxy wanderer-web:3000
+}
+wd.dirtbikechina.com {
+	basicauth {
+		{$CADDY_ADMIN} {$CADDY_PASSWORD}
+	}
+	reverse_proxy wanderer-db:8090
 }
