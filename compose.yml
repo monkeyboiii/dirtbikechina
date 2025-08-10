@@ -1,6 +1,6 @@
 x-common-env-wanderer: &cenv
   MEILI_URL: http://search:7700
-  MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+  MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?error}
 
 services:
   caddy:
@@ -28,10 +28,10 @@ services:
     container_name: mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?error}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?error}
+      MYSQL_USER: ${MYSQL_USER:?error}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?error}
     volumes:
       - wordpress_mysql:/var/lib/mysql
     networks:
@@ -43,9 +43,11 @@ services:
     restart: unless-stopped
     environment:
       WORDPRESS_DB_HOST: mysql:3306
-      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
-      WORDPRESS_DB_USER: ${MYSQL_USER}
-      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE:?error}
+      WORDPRESS_DB_USER: ${MYSQL_USER:?error}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD:?error}
+      WP_HOME: https://www.${DOMAIN_APEX:-dirtbikechina.com}
+      WP_SITEURL: https://www.${DOMAIN_APEX:-dirtbikechina.com}
     volumes:
       - "./wordpress/:/var/www/html"
       - "./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini"
@@ -60,8 +62,10 @@ services:
     restart: unless-stopped
     environment:
       PMA_HOST: mysql
-      PMA_USER: ${MYSQL_USER}
-      PMA_PASSWORD: ${MYSQL_PASSWORD}
+      PMA_USER: ${MYSQL_USER:?error}
+      PMA_PASSWORD: ${MYSQL_PASSWORD:?error}
+    depends_on:
+      - mysql
     networks:
       - caddy_net
 
@@ -95,7 +99,7 @@ services:
         condition: service_healthy
     environment:
       <<: *cenv
-      POCKETBASE_ENCRYPTION_KEY: ${POCKETBASE_ENCRYPTION_KEY}
+      POCKETBASE_ENCRYPTION_KEY: ${POCKETBASE_ENCRYPTION_KEY:?error}
       ORIGIN: https://trails.${DOMAIN_APEX:-dirtbikechina.com}
     # ports:
     #   - "8090:8090"
@@ -117,7 +121,7 @@ services:
       <<: *cenv
       ORIGIN: https://trails.${DOMAIN_APEX:-dirtbikechina.com}
       BODY_SIZE_LIMIT: Infinity
-      PUBLIC_POCKETBASE_URL: http://db:8090
+      PUBLIC_POCKETBASE_URL: http://wanderer-db:8090
       PUBLIC_DISABLE_SIGNUP: false
       UPLOAD_FOLDER: /app/uploads
       UPLOAD_USER:
@@ -166,6 +170,7 @@ services:
       - ADMIN_ENDPOINT=https://admin.auth.${DOMAIN_APEX:-dirtbikechina.com}
     networks:
       - caddy_net
+    restart: unless-stopped
 
   # one-off seeding task for logto
   logto-init:
@@ -200,6 +205,7 @@ services:
       retries: 5
     networks:
       - caddy_net
+    restart: unless-stopped
 
 volumes:
   caddy_data:

@@ -1,5 +1,9 @@
 # /etc/caddy/Caddyfile
 
+dirtbikechina.com {
+	redir https://www.dirtbikechina.com
+}
+
 ##
 ## wordpress
 
