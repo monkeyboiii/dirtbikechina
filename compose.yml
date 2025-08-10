@@ -4,12 +4,15 @@ x-common-env-wanderer: &cenv
 
 services:
   caddy:
-    image: "${DOCKER_MIRROR}caddy:latest"
+    image: "${DOCKER_MIRROR:-}caddy:latest"
     container_name: caddy
     restart: always
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      - CADDY_PROXY_ADMIN=${CADDY_PROXY_ADMIN:?error}
+      - CADDY_PROXY_PASSWORD=${CADDY_PROXY_PASSWORD:?error}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -21,7 +24,7 @@ services:
   ## wordpress
 
   mysql:
-    image: "${DOCKER_MIRROR}mysql:latest"
+    image: "${DOCKER_MIRROR:-}mysql:latest"
     container_name: mysql
     restart: unless-stopped
     environment:
@@ -29,11 +32,13 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - wordpress_mysql:/var/lib/mysql
     networks:
       - caddy_net
 
   wordpress:
-    image: "${DOCKER_MIRROR}wordpress:latest"
+    image: "${DOCKER_MIRROR:-}wordpress:latest"
     container_name: wordpress
     restart: unless-stopped
     environment:
@@ -43,13 +48,14 @@ services:
       WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - "./wordpress/:/var/www/html"
+      - "./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini"
     networks:
       - caddy_net
     depends_on:
       - mysql
 
   phpmyadmin:
-    image: "${DOCKER_MIRROR}phpmyadmin/phpmyadmin"
+    image: "${DOCKER_MIRROR:-}phpmyadmin/phpmyadmin"
     container_name: phpmyadmin
     restart: unless-stopped
     environment:
@@ -62,7 +68,7 @@ services:
   ## wanderer
 
   search:
-    image: "${DOCKER_MIRROR}getmeili/meilisearch:v1.16.0"
+    image: "${DOCKER_MIRROR:-}getmeili/meilisearch:v1.16.0"
     container_name: wanderer-search
     environment:
       <<: *cenv
@@ -81,8 +87,8 @@ services:
       start_period: 20s
       timeout: 10s
 
-  db:
-    image: "${DOCKER_MIRROR}flomp/wanderer-db"
+  pocketbase:
+    image: "${DOCKER_MIRROR:-}flomp/wanderer-db"
     container_name: wanderer-db
     depends_on:
       search:
@@ -90,7 +96,7 @@ services:
     environment:
       <<: *cenv
       POCKETBASE_ENCRYPTION_KEY: ${POCKETBASE_ENCRYPTION_KEY}
-      ORIGIN: https://trails.dirtbikechina.com
+      ORIGIN: https://trails.${DOMAIN_APEX:-dirtbikechina.com}
     # ports:
     #   - "8090:8090"
     networks:
@@ -100,16 +106,16 @@ services:
       - wanderer_pb:/pb_data
 
   web:
-    image: "${DOCKER_MIRROR}flomp/wanderer-web"
+    image: "${DOCKER_MIRROR:-}flomp/wanderer-web"
     container_name: wanderer-web
     depends_on:
       search:
         condition: service_healthy
-      db:
+      pocketbase:
         condition: service_started
     environment:
       <<: *cenv
-      ORIGIN: https://trails.dirtbikechina.com
+      ORIGIN: https://trails.${DOMAIN_APEX:-dirtbikechina.com}
       BODY_SIZE_LIMIT: Infinity
       PUBLIC_POCKETBASE_URL: http://db:8090
       PUBLIC_DISABLE_SIGNUP: false
@@ -140,13 +146,69 @@ services:
   #     - build_admins=True
   #     - build_time_zones=True
 
+  ## logto
+
+  logto:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      logto-init:
+        condition: service_completed_successfully
+    image: "${DOCKER_MIRROR:-ghcr.io/}logto-io/logto:latest"
+    container_name: logto
+    # ports:
+    #   - 3001:3001
+    #   - 3002:3002
+    environment:
+      - TRUST_PROXY_HEADER=1
+      - DB_URL=postgres://${POSTGRES_USER:?error}:${POSTGRES_PASSWORD:?error}@postgres:5432/logto
+      - ENDPOINT=https://auth.${DOMAIN_APEX:-dirtbikechina.com}
+      - ADMIN_ENDPOINT=https://admin.auth.${DOMAIN_APEX:-dirtbikechina.com}
+    networks:
+      - caddy_net
+
+  # one-off seeding task for logto
+  logto-init:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    image: "${DOCKER_MIRROR:-ghcr.io/}logto-io/logto:latest"
+    profiles: 
+      - init
+    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe"]
+    environment:
+      - TRUST_PROXY_HEADER=1
+      - DB_URL=postgres://${POSTGRES_USER:?error}:${POSTGRES_PASSWORD:?error}@postgres:5432/logto
+      - ENDPOINT=https://auth.${DOMAIN_APEX:-dirtbikechina.com}
+      - ADMIN_ENDPOINT=https://admin.auth.${DOMAIN_APEX:-dirtbikechina.com}
+    networks:
+      - caddy_net
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
+    user: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?error}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?error}
+    volumes:
+      - logto_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - caddy_net
+
 volumes:
   caddy_data:
   caddy_config:
-  mysql:
+  wordpress_mysql:
   wanderer_ms:
   wanderer_pb:
   wanderer_web:
+  logto_postgres:
 
 networks:
   caddy_net:

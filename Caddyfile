@@ -1,21 +1,45 @@
+# /etc/caddy/Caddyfile
+
+##
+## wordpress
+
 www.dirtbikechina.com {
 	reverse_proxy wordpress:80
 }
-dbadmin.dirtbikechina.com {
-	basicauth {
-		{$CADDY_ADMIN} {$CADDY_PASSWORD}
+admin.www.dirtbikechina.com {
+	basic_auth {
+		{$CADDY_PROXY_ADMIN} {$CADDY_PROXY_PASSWORD}
 	}
 	reverse_proxy phpmyadmin:80
 }
+
+##
+## discourse
+## caddy to nginx reverse_proxy reverse_proxy
+
 forum.dirtbikechina.com {
 	reverse_proxy unix//sock/nginx.http.sock
 }
+
+##
+## wanderer
+
 trails.dirtbikechina.com {
 	reverse_proxy wanderer-web:3000
 }
-wd.dirtbikechina.com {
-	basicauth {
-		{$CADDY_ADMIN} {$CADDY_PASSWORD}
+admin.trails.dirtbikechina.com {
+	basic_auth {
+		{$CADDY_PROXY_ADMIN} {$CADDY_PROXY_PASSWORD}
 	}
 	reverse_proxy wanderer-db:8090
+}
+
+##
+## logto
+
+auth.dirtbikechina.com {
+	reverse_proxy logto:3001
+}
+admin.auth.dirtbikechina.com {
+	reverse_proxy logto:3002
 }
