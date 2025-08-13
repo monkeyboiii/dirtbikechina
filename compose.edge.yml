@@ -1,0 +1,26 @@
+networks:
+  edge:
+    name: caddy_edge
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+services:
+  caddy:
+    image: ${DOCKER_MIRROR:-}caddy:latest
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      - CADDY_PROXY_ADMIN=${CADDY_PROXY_ADMIN:?error}
+      - CADDY_PROXY_PASSWORD=${CADDY_PROXY_PASSWORD:?error}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+      - /var/discourse/shared/standalone:/sock
+    networks:
+      - edge

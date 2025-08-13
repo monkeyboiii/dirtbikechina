@@ -1,0 +1,3 @@
+[submodule "submodules/pg_cjk_parser"]
+	path = submodules/pg_cjk_parser
+	url = git@github.com:huangjimmy/pg_cjk_parser.git

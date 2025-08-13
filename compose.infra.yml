@@ -1,0 +1,59 @@
+x-pg-health: &pg_health
+  test:
+    - CMD-SHELL
+    - pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DATABASE
+  interval: 5s
+  timeout: 5s
+  retries: 30
+
+x-mysql-health: &mysql_health
+  test:
+    - CMD-SHELL
+    - mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent
+  interval: 5s
+  timeout: 5s
+  retries: 30
+
+networks:
+  wp_net: {}
+  logto_net: {}
+  discourse_net: {}
+
+volumes:
+  mysql_data:
+  postgres_data:
+
+services:
+  # port 3306
+  mysql:
+    image: ${DOCKER_MIRROR:-}mysql:latest
+    restart: unless-stopped
+    environment:
+      MYSQL_USER: ${MYSQL_USER:?error}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?error}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?error}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?error}
+    healthcheck: *mysql_health
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - wp_net
+
+  # port 5432
+  postgres:
+    build:
+      context: ./submodules/pg_cjk_parser
+      args:
+        POSTGRES_VERSION: ${DISCOURSE_POSTGRES_VERSION:-15}
+    image: ${POSTGRES_CJK_IMAGE:-dirtbikechina/postgres:15-cjk}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?error}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?error}
+      POSTGRES_DATABASE: logto
+    healthcheck: *pg_health
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - logto_net
+      - discourse_net

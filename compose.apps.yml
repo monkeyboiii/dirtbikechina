@@ -1,0 +1,175 @@
+x-common-env-wanderer: &cenv
+  MEILI_URL: http://meili:7700
+  MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?error}
+
+x-pocketbase-health: &pocketbase_health
+  test: curl --fail http://search:7700/health || exit 1
+  start_period: 20s
+  interval: 15s
+  timeout: 10s
+  retries: 10
+
+networks:
+  edge:
+    name: caddy_edge
+    external: true
+  wp_net: {}
+  wanderer_net: {}
+  logto_net: {}
+
+volumes:
+  wordpress_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./wordpress
+  meili_data:
+  pocketbase_data:
+  svelte_data:
+
+services:
+  ########################################
+  # WordPress
+  ########################################
+
+  # port 80, 443
+  wordpress:
+    profiles: ["wordpress"]
+    image: ${DOCKER_MIRROR:-}wordpress:latest
+    restart: unless-stopped
+    environment:
+      WP_HOME: https://www.${DOMAIN_APEX:-dirtbikechina.com}
+      WP_SITEURL: https://www.${DOMAIN_APEX:-dirtbikechina.com}
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_USER: ${MYSQL_USER:?error}
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE:?error}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD:?error}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - wordpress_data/:/var/www/html
+      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
+    networks:
+      - wp_net
+      - edge
+
+  # port 80
+  phpmyadmin:
+    profiles: ["wordpress"]
+    image: ${DOCKER_MIRROR:-}phpmyadmin/phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: ${MYSQL_USER:?error}
+      PMA_PASSWORD: ${MYSQL_PASSWORD:?error}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - wp_net
+      - edge
+
+  ########################################
+  # Wanderer
+  ########################################
+
+  # port 7700
+  meili:
+    profiles: ["wanderer"]
+    image: ${DOCKER_MIRROR:-}getmeili/meilisearch:v1.16.0
+    restart: unless-stopped
+    environment:
+      <<: *cenv
+      MEILI_NO_ANALYTICS: true
+    healthcheck: *pocketbase_health
+    volumes:
+      - meili_data:/meili_data/data.ms
+    networks:
+      - wanderer_net
+
+  # port 8090
+  pocketbase:
+    profiles: ["wanderer"]
+    image: ${DOCKER_MIRROR:-}flomp/wanderer-db
+    restart: unless-stopped
+    environment:
+      <<: *cenv
+      POCKETBASE_ENCRYPTION_KEY: ${POCKETBASE_ENCRYPTION_KEY:?error}
+      ORIGIN: https://trails.${DOMAIN_APEX:-dirtbikechina.com}
+    depends_on:
+      meili:
+        condition: service_healthy
+    volumes:
+      - pocketbase_data:/pb_data
+    networks:
+      - wanderer_net
+      - edge
+
+  # port 3000
+  svelte:
+    profiles: ["wanderer"]
+    image: ${DOCKER_MIRROR:-}flomp/wanderer-web
+    restart: unless-stopped
+    environment:
+      <<: *cenv
+      ORIGIN: https://trails.${DOMAIN_APEX:-dirtbikechina.com}
+      BODY_SIZE_LIMIT: Infinity
+      PUBLIC_POCKETBASE_URL: http://pocketbase:8090
+      PUBLIC_DISABLE_SIGNUP: false
+      UPLOAD_FOLDER: /app/uploads
+      UPLOAD_USER:
+      UPLOAD_PASSWORD:
+      PUBLIC_VALHALLA_URL: https://valhalla1.openstreetmap.de
+      PUBLIC_NOMINATIM_URL: https://nominatim.openstreetmap.org
+    depends_on:
+      meili:
+        condition: service_healthy
+      pocketbase:
+        condition: service_started
+    volumes:
+      - svelte_data:/app/uploads
+    networks:
+      - wanderer_net
+      - edge
+
+  ########################################
+  # Logto
+  ########################################
+
+  logto-init:
+    profiles: ["init"]
+    image: ${DOCKER_MIRROR:-ghcr.io/}logto-io/logto:latest
+    restart: no
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe"]
+    environment:
+      - TRUST_PROXY_HEADER=1
+      - ENDPOINT=https://auth.${DOMAIN_APEX:-dirtbikechina.com}
+      - ADMIN_ENDPOINT=https://admin.auth.${DOMAIN_APEX:-dirtbikechina.com}
+      - DB_URL=postgres://${POSTGRES_USER:?error}:${POSTGRES_PASSWORD:?error}@postgres:5432/logto
+    networks:
+      - logto_net
+
+  # port 3001 core
+  # port 3002 admin
+  logto:
+    profiles: ["logto"]
+    image: ${DOCKER_MIRROR:-ghcr.io/}logto-io/logto:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      logto-init:
+        condition: service_completed_successfully
+    environment:
+      - TRUST_PROXY_HEADER=1
+      - ENDPOINT=https://auth.${DOMAIN_APEX:-dirtbikechina.com}
+      - ADMIN_ENDPOINT=https://admin.auth.${DOMAIN_APEX:-dirtbikechina.com}
+      - DB_URL=postgres://${POSTGRES_USER:?error}:${POSTGRES_PASSWORD:?error}@postgres:5432/logto
+    networks:
+      - logto_net
+      - edge
