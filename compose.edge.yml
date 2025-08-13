@@ -2,6 +2,9 @@ networks:
   edge:
     name: caddy_edge
     external: true
+  wp_net: {}
+  wanderer_net: {}
+  logto_net: {}
 
 volumes:
   caddy_data:
@@ -23,4 +26,7 @@ services:
       - caddy_config:/config
       - /var/discourse/shared/standalone:/sock
     networks:
+      - wp_net
+      - wanderer_net
+      - logto_net
       - edge
