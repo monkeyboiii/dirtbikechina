@@ -43,6 +43,7 @@ services:
   postgres:
     build:
       context: ./submodules/pg_cjk_parser
+      dockerfile: ../../discourse.Dockerfile
       args:
         POSTGRES_VERSION: ${DISCOURSE_POSTGRES_VERSION:-15}
     image: ${POSTGRES_CJK_IMAGE:-dirtbikechina/postgres:15-cjk}

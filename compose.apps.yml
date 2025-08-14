@@ -188,7 +188,8 @@ services:
     entrypoint: ["sh", "/script.sh"]
     environment:
       - PGPASSWORD=${POSTGRES_PASSWORD:?error}
+      - DISCOURSE_DB_PASSWORD=${DISCOURSE_DB_PASSWORD:?error}
     volumes:
-      - ./pg_cjk_parser_install.sh:/script.sh:ro
+      - ./discourse_init.sh:/script.sh:ro
     networks:
       - discourse_net
