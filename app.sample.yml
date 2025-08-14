@@ -4,13 +4,6 @@ templates:
   - "templates/web.ratelimited.template.yml"
   - "templates/web.socketed.template.yml"
 
-expose:
-  #- "8880:80"   # http
-  #- "443:443" # https
-
-params:
-  db_default_text_search_config: "pg_catalog.english"
-
 env:
   LC_ALL: en_US.UTF-8
   LANG: en_US.UTF-8
@@ -28,6 +21,11 @@ env:
   #DISCOURSE_SMTP_ENABLE_START_TLS: true
   DISCOURSE_SMTP_DOMAIN: {{DISCOURSE_SMTP_DOMAIN}}
   DISCOURSE_NOTIFICATION_EMAIL: {{DISCOURSE_NOTIFICATION_EMAIL}}
+
+  DISCOURSE_DB_USERNAME: {{DISCOURSE_DB_USERNAME}}
+  DISCOURSE_DB_PASSWORD: {{DISCOURSE_DB_PASSWORD}}
+  DISCOURSE_DB_NAME: {{DISCOURSE_DB_NAME}}
+  DISCOURSE_DB_HOST: {{DISCOURSE_DB_HOST}}
 
   ## The http or https CDN address for this Discourse instance (configured to pull)
   ## see https://meta.discourse.org/t/14857 for details
@@ -47,17 +45,14 @@ volumes:
       host: /var/discourse/shared/standalone/log/var-log
       guest: /var/log
 
-
 docker_args:
   - '--network dirtbikechina_discourse_net --network caddy_edge'
-
 
 networks:
   dirtbikechina_discourse_net:
     external: true
   ddy_edge:
     external: true
-
 
 ## Plugins go here
 ## see https://meta.discourse.org/t/19157 for details
