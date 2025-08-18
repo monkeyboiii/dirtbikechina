@@ -33,9 +33,6 @@ trails.dirtbikechina.com {
 	reverse_proxy svelte:3000
 }
 admin.trails.dirtbikechina.com {
-	basic_auth {
-		{$CADDY_PROXY_ADMIN} {$CADDY_PROXY_PASSWORD}
-	}
 	reverse_proxy pocketbase:8090
 }
 

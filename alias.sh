@@ -33,7 +33,7 @@ sdcex() {
     return 1
   fi
   
-  sdcit "$container_id" "${2:-/bin/bash}"
+  sdeit "$container_id" "${2:-/bin/bash}"
 }
 
 eased() {
