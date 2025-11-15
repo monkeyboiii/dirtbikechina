@@ -10,6 +10,7 @@ alias sdc='sudo docker compose'
 alias sdeit='sudo docker exec -it'
 alias sdcpd='sudo docker compose -p dirtbikechina'
 alias sdcpdf='sudo docker compose -p dirtbikechina -f compose.edge.yml -f compose.infra.yml -f compose.apps.yml'
+alias sdcpdpac='sudo docker compose -f compose.infra.yml -f compose.edge.yml -f compose.apps.yml --profile init --profile logto --profile wanderer --profile wordpress config'
 
 sdcid() {
   if [ -z "$1" ]; then
@@ -43,3 +44,6 @@ eased() {
     fi
     alias $1 | sed "s/alias $1='\(.*\)'/\1/"
 }
+
+
+alias kpcf='kompose convert -f'
