@@ -62,6 +62,8 @@ hooks:
         cd: $home/plugins
         cmd:
           - git clone https://github.com/discourse/docker_manager.git
+          - git clone https://github.com/merefield/discourse-locations
+          - git clone https://{{GITHUB_PAT}}@github.com/monkeyboiii/discourse-logto-mobile-session.git
 
 ## Any custom commands to run after building
 run:
