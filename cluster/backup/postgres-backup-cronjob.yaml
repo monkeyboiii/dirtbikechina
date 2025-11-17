@@ -1,0 +1,319 @@
+# =============================================================================
+# PostgreSQL Backup CronJob - Daily backups with on-site and off-site storage
+# =============================================================================
+
+# On-site backup storage (Longhorn PVC)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-storage
+  namespace: infra
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: longhorn-backup
+  resources:
+    requests:
+      storage: 100Gi
+
+# Off-site backup secret (S3/Backblaze B2/Wasabi credentials)
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: offsite-backup-credentials
+  namespace: infra
+type: Opaque
+stringData:
+  # Rclone configuration for Backblaze B2, S3, etc.
+  rclone.conf: |
+    [b2]
+    type = b2
+    account = <B2_APPLICATION_KEY_ID>
+    key = <B2_APPLICATION_KEY>
+    hard_delete = false
+
+    [s3]
+    type = s3
+    provider = AWS
+    access_key_id = <AWS_ACCESS_KEY_ID>
+    secret_access_key = <AWS_SECRET_ACCESS_KEY>
+    region = us-east-1
+
+# Daily PostgreSQL backup CronJob
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-daily
+  namespace: infra
+  labels:
+    app: postgres-backup
+spec:
+  # Run daily at 3 AM UTC
+  schedule: "0 3 * * *"
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+    spec:
+      ttlSecondsAfterFinished: 86400  # Keep job for 24 hours
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+        spec:
+          restartPolicy: OnFailure
+
+          containers:
+          - name: postgres-backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+
+              echo "=== Starting PostgreSQL Backup ==="
+              date
+
+              # Backup file with timestamp
+              BACKUP_FILE="postgres-all-databases-$(date +%Y%m%d-%H%M%S).sql.gz"
+
+              # Backup all databases
+              echo "Backing up all databases..."
+              pg_dumpall -h postgres-primary -U postgres | gzip > /backup/${BACKUP_FILE}
+
+              # Verify backup
+              if [ ! -s /backup/${BACKUP_FILE} ]; then
+                echo "ERROR: Backup file is empty!"
+                exit 1
+              fi
+
+              echo "Backup completed: ${BACKUP_FILE}"
+              ls -lh /backup/${BACKUP_FILE}
+
+              # Keep only last 30 days of on-site backups
+              echo "Cleaning up old on-site backups..."
+              find /backup -name "postgres-all-databases-*.sql.gz" -mtime +30 -delete
+
+              echo "On-site backup retention:"
+              ls -lh /backup/
+
+              echo "=== Backup Complete ==="
+
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "1Gi"
+                cpu: "1000m"
+
+          # Off-site backup container (runs after on-site backup)
+          - name: offsite-sync
+            image: rclone/rclone:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+
+              echo "=== Starting Off-Site Backup Sync ==="
+
+              # Wait for backup to complete (simple delay)
+              sleep 60
+
+              # Sync to Backblaze B2
+              echo "Syncing to Backblaze B2..."
+              rclone copy /backup/ b2:dirtbikechina-offsite/postgres/ \
+                --config /config/rclone.conf \
+                --progress \
+                --transfers 4 \
+                --checkers 8
+
+              # Optional: Sync to AWS S3 as well (redundancy)
+              # echo "Syncing to AWS S3..."
+              # rclone copy /backup/ s3:dirtbikechina-backups/postgres/ \
+              #   --config /config/rclone.conf
+
+              echo "Off-site sync completed!"
+
+              # Verify remote backups
+              echo "Remote backup listing:"
+              rclone ls b2:dirtbikechina-offsite/postgres/ --config /config/rclone.conf | tail -10
+
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+              readOnly: true
+            - name: rclone-config
+              mountPath: /config
+              readOnly: true
+
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: postgres-backup-storage
+          - name: rclone-config
+            secret:
+              secretName: offsite-backup-credentials
+
+# =============================================================================
+# MySQL Backup CronJob
+# =============================================================================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-backup-storage
+  namespace: infra
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: longhorn-backup
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mysql-backup-daily
+  namespace: infra
+  labels:
+    app: mysql-backup
+spec:
+  schedule: "0 4 * * *"  # 4 AM daily (1 hour after postgres)
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+
+  jobTemplate:
+    metadata:
+      labels:
+        app: mysql-backup
+    spec:
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: mysql-backup
+        spec:
+          restartPolicy: OnFailure
+
+          containers:
+          - name: mysql-backup
+            image: mysql:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+
+              echo "=== Starting MySQL Backup ==="
+              date
+
+              BACKUP_FILE="mysql-all-databases-$(date +%Y%m%d-%H%M%S).sql.gz"
+
+              # Backup all databases
+              mysqldump -h mysql-primary -u root -p${MYSQL_ROOT_PASSWORD} \
+                --all-databases \
+                --single-transaction \
+                --quick \
+                --lock-tables=false | gzip > /backup/${BACKUP_FILE}
+
+              # Verify
+              if [ ! -s /backup/${BACKUP_FILE} ]; then
+                echo "ERROR: Backup file is empty!"
+                exit 1
+              fi
+
+              echo "Backup completed: ${BACKUP_FILE}"
+              ls -lh /backup/${BACKUP_FILE}
+
+              # Cleanup old backups (30 days)
+              find /backup -name "mysql-all-databases-*.sql.gz" -mtime +30 -delete
+
+              echo "=== Backup Complete ==="
+
+            env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: root-password
+
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+
+          - name: offsite-sync
+            image: rclone/rclone:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              sleep 60
+              rclone copy /backup/ b2:dirtbikechina-offsite/mysql/ \
+                --config /config/rclone.conf \
+                --progress
+
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+              readOnly: true
+            - name: rclone-config
+              mountPath: /config
+              readOnly: true
+
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: mysql-backup-storage
+          - name: rclone-config
+            secret:
+              secretName: offsite-backup-credentials
+
+# =============================================================================
+# Restore Job Example (manual trigger)
+# =============================================================================
+# kubectl create job postgres-restore-20250117 \
+#   --from=cronjob/postgres-backup-daily \
+#   -n infra
+#
+# Then modify the job to run restore instead of backup:
+# kubectl edit job postgres-restore-20250117 -n infra
+#
+# Change command to:
+# psql -h postgres-primary -U postgres < /backup/postgres-all-databases-YYYYMMDD-HHMMSS.sql

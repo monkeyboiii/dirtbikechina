@@ -1,0 +1,34 @@
+# Kustomize configuration for Staging Environment
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stage
+
+resources:
+  - ../../base/apps/wordpress-deployment.yaml
+
+commonLabels:
+  environment: staging
+  managed-by: kustomize
+
+commonAnnotations:
+  environment: staging
+
+configMapGenerator:
+  - name: app-config
+    literals:
+      - DOMAIN_APEX=dirtbikechina.com
+      - ENVIRONMENT=staging
+
+patchesStrategicMerge:
+  - staging-patches.yaml
+
+# Lower replicas for staging
+replicas:
+  - name: wordpress-blue
+    count: 2
+
+# Use specific image tags for testing
+images:
+  - name: wordpress
+    newTag: latest

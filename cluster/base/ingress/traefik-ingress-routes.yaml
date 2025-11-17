@@ -1,0 +1,267 @@
+# =============================================================================
+# Traefik IngressRoute with A/B Testing (70% prod, 30% stage)
+# =============================================================================
+
+# Certificate for all domains
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dirtbikechina-wildcard-cert
+  namespace: ingress-system
+spec:
+  secretName: dirtbikechina-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - "dirtbikechina.com"
+  - "*.dirtbikechina.com"
+
+# =============================================================================
+# WordPress - www.dirtbikechina.com (A/B Testing: 70% prod, 30% stage)
+# =============================================================================
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: wordpress-ab-testing
+  namespace: ingress-system
+  labels:
+    app: wordpress
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`www.dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: wordpress
+          namespace: prod
+          port: 80
+          weight: 70          # 70% traffic to production
+        - name: wordpress
+          namespace: stage
+          port: 80
+          weight: 30          # 30% traffic to staging (A/B test)
+  tls:
+    secretName: dirtbikechina-tls
+
+# Redirect apex to www
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: apex-redirect
+  namespace: ingress-system
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: wordpress
+          namespace: prod
+          port: 80
+      middlewares:
+        - name: redirect-apex-to-www
+  tls:
+    secretName: dirtbikechina-tls
+
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-apex-to-www
+  namespace: ingress-system
+spec:
+  redirectRegex:
+    regex: ^https://dirtbikechina\.com/(.*)
+    replacement: https://www.dirtbikechina.com/${1}
+    permanent: true
+
+# =============================================================================
+# Discourse - forum.dirtbikechina.com (A/B Testing: 70% prod, 30% stage)
+# =============================================================================
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: discourse-ab-testing
+  namespace: ingress-system
+  labels:
+    app: discourse
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`forum.dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: discourse
+          namespace: prod
+          port: 3000       # HTTP port (not Unix socket)
+          weight: 70
+        - name: discourse
+          namespace: stage
+          port: 3000
+          weight: 30
+  tls:
+    secretName: dirtbikechina-tls
+
+# =============================================================================
+# Wanderer - trails.dirtbikechina.com (A/B Testing)
+# =============================================================================
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: wanderer-ab-testing
+  namespace: ingress-system
+  labels:
+    app: wanderer
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`trails.dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: wanderer-svelte
+          namespace: prod
+          port: 3000
+          weight: 70
+        - name: wanderer-svelte
+          namespace: stage
+          port: 3000
+          weight: 30
+  tls:
+    secretName: dirtbikechina-tls
+
+# PocketBase admin
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pocketbase-admin
+  namespace: ingress-system
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`admin.trails.dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: wanderer-pocketbase
+          namespace: prod
+          port: 8090
+  tls:
+    secretName: dirtbikechina-tls
+
+# =============================================================================
+# Logto - auth.dirtbikechina.com (A/B Testing)
+# =============================================================================
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: logto-ab-testing
+  namespace: ingress-system
+  labels:
+    app: logto
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`auth.dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: logto
+          namespace: prod
+          port: 3001
+          weight: 70
+        - name: logto
+          namespace: stage
+          port: 3001
+          weight: 30
+  tls:
+    secretName: dirtbikechina-tls
+
+# Logto admin
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: logto-admin
+  namespace: ingress-system
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`admin.auth.dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: logto
+          namespace: prod
+          port: 3002
+  tls:
+    secretName: dirtbikechina-tls
+
+# =============================================================================
+# PHPMyAdmin - admin.www.dirtbikechina.com (Basic Auth)
+# =============================================================================
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: phpmyadmin-auth
+  namespace: ingress-system
+spec:
+  basicAuth:
+    secret: phpmyadmin-credentials  # Create with htpasswd
+
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: phpmyadmin
+  namespace: ingress-system
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`admin.www.dirtbikechina.com`)
+      kind: Rule
+      services:
+        - name: phpmyadmin
+          namespace: prod
+          port: 80
+      middlewares:
+        - name: phpmyadmin-auth
+  tls:
+    secretName: dirtbikechina-tls
+
+# =============================================================================
+# PRODUCTION ONLY ROUTES (No A/B Testing - 100% to prod)
+# =============================================================================
+# Use these routes when you want to disable A/B testing
+
+# ---
+# apiVersion: traefik.containo.us/v1alpha1
+# kind: IngressRoute
+# metadata:
+#   name: wordpress-prod-only
+#   namespace: ingress-system
+# spec:
+#   entryPoints:
+#     - websecure
+#   routes:
+#     - match: Host(`www.dirtbikechina.com`)
+#       kind: Rule
+#       services:
+#         - name: wordpress
+#           namespace: prod
+#           port: 80
+#   tls:
+#     secretName: dirtbikechina-tls

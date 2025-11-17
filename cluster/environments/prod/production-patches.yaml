@@ -1,0 +1,28 @@
+# Production-specific patches
+# These override base configurations for production environment
+
+# WordPress - Increase resources for production
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-blue
+  namespace: prod
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: wordpress
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        env:
+        - name: WP_CACHE
+          value: "true"
+        - name: WP_DEBUG
+          value: "false"
