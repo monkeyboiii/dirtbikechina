@@ -1,0 +1,49 @@
+# Kustomize configuration for Production Environment
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: prod
+
+# Base resources
+resources:
+  - ../../base/apps/wordpress-deployment.yaml
+  # Add other app deployments here
+  # - ../../base/apps/discourse-deployment.yaml
+  # - ../../base/apps/logto-deployment.yaml
+  # - ../../base/apps/wanderer-deployment.yaml
+
+# Common labels for all resources
+commonLabels:
+  environment: production
+  managed-by: kustomize
+
+# Common annotations
+commonAnnotations:
+  deployed-by: kubectl
+  environment: production
+
+# ConfigMap generator (environment-specific configs)
+configMapGenerator:
+  - name: app-config
+    literals:
+      - DOMAIN_APEX=dirtbikechina.com
+      - ENVIRONMENT=production
+
+# Patches for production-specific settings
+patchesStrategicMerge:
+  - production-patches.yaml
+
+# Resource adjustments (replicas, limits)
+replicas:
+  - name: wordpress-blue
+    count: 3  # Higher replica count for production
+
+# Images (override with specific versions/tags)
+images:
+  - name: wordpress
+    newTag: latest  # Pin to specific version in production
+  # - name: dirtbikechina/discourse
+  #   newTag: v2.9.0
+
+# Namespace transformation
+# All resources will be deployed to 'prod' namespace

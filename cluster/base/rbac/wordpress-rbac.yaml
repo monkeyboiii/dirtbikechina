@@ -1,0 +1,119 @@
+# WordPress RBAC Configuration
+#
+# Principle of Least Privilege: WordPress pods should only be able to:
+# - Read ConfigMaps (for configuration)
+# - Read Secrets (for database credentials)
+# - Nothing else (no cluster-wide permissions, no modifications)
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wordpress
+  namespace: prod
+  labels:
+    app: wordpress
+---
+# Role: Limited permissions within the namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wordpress-role
+  namespace: prod
+  labels:
+    app: wordpress
+rules:
+# Allow reading ConfigMaps (for app configuration)
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+
+# Allow reading Secrets (for database passwords, API keys)
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+  # Note: No 'watch' on secrets (reduces attack surface)
+
+# Explicitly deny everything else (deny-by-default)
+# No pods, services, deployments, etc.
+---
+# RoleBinding: Bind the wordpress ServiceAccount to the wordpress-role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wordpress-rolebinding
+  namespace: prod
+  labels:
+    app: wordpress
+subjects:
+- kind: ServiceAccount
+  name: wordpress
+  namespace: prod
+roleRef:
+  kind: Role
+  name: wordpress-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Create same RBAC for staging
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wordpress
+  namespace: stage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wordpress-role
+  namespace: stage
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wordpress-rolebinding
+  namespace: stage
+subjects:
+- kind: ServiceAccount
+  name: wordpress
+  namespace: stage
+roleRef:
+  kind: Role
+  name: wordpress-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Dev environment
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wordpress
+  namespace: dev
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wordpress-role
+  namespace: dev
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wordpress-rolebinding
+  namespace: dev
+subjects:
+- kind: ServiceAccount
+  name: wordpress
+  namespace: dev
+roleRef:
+  kind: Role
+  name: wordpress-role
+  apiGroup: rbac.authorization.k8s.io

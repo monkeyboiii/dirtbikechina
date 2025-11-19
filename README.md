@@ -12,7 +12,7 @@ Using OSS applications including
 4. [Caddy](https://caddyserver.com/) for reverse proxy, SSL termination, etc.
 5. [Docker](https://www.docker.com/) to nicely wrap it all up.
 
-we can self-host the project on a single Linux server.
+we can self-host the project on a single Linux server. Refer to [guides](guides/) for more in-depth tutorials.
 
 ## Prerequisites
 

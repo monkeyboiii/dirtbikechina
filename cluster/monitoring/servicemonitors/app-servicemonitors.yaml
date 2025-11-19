@@ -1,0 +1,125 @@
+# ServiceMonitors for Application Metrics
+#
+# Prometheus will automatically discover and scrape these endpoints
+
+---
+# WordPress ServiceMonitor (if metrics are exposed)
+# Note: WordPress doesn't expose Prometheus metrics by default
+# Consider installing: https://wordpress.org/plugins/prometheus-exporter/
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wordpress
+  namespace: prod
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+  endpoints:
+  - port: metrics  # Assuming metrics endpoint on separate port
+    interval: 30s
+    path: /metrics
+
+---
+# Traefik ServiceMonitor (metrics enabled by default)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: traefik
+  namespace: ingress-system
+  labels:
+    app: traefik
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+
+---
+# Longhorn ServiceMonitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: longhorn
+  namespace: longhorn-system
+  labels:
+    app: longhorn
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-manager
+  endpoints:
+  - port: manager
+    path: /metrics
+
+---
+# cert-manager ServiceMonitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+  labels:
+    app: cert-manager
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+  endpoints:
+  - port: tcp-prometheus-servicemonitor
+    interval: 60s
+
+---
+# MySQL Exporter (requires deploying mysql-exporter sidecar)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-exporter
+  namespace: infra
+  labels:
+    app: mysql-exporter
+spec:
+  ports:
+  - name: metrics
+    port: 9104
+    targetPort: 9104
+  selector:
+    app: mysql
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mysql
+  namespace: infra
+  labels:
+    app: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql-exporter
+  endpoints:
+  - port: metrics
+    interval: 30s
+
+---
+# PostgreSQL Exporter (CloudNativePG has built-in metrics)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres
+  namespace: infra
+  labels:
+    app: postgres
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: postgres-cluster
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics

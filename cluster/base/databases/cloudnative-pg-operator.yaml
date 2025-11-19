@@ -1,0 +1,140 @@
+# CloudNativePG Operator Installation
+#
+# Provides PostgreSQL High Availability with:
+# - Automatic failover (<30 seconds)
+# - Streaming replication
+# - Point-in-time recovery (PITR)
+# - Backup management
+# - Read replicas
+#
+# Installation:
+#   kubectl apply -f cloudnative-pg-operator.yaml
+#
+# Or use latest release:
+#   kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.22/releases/cnpg-1.22.0.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cnpg-manager
+  namespace: cnpg-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cnpg-manager
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  - services
+  - persistentvolumeclaims
+  - pods
+  - pods/exec
+  - pods/log
+  - events
+  verbs:
+  - '*'
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - statefulsets
+  verbs:
+  - '*'
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  - clusters/status
+  - backups
+  - scheduledbackups
+  verbs:
+  - '*'
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - '*'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cnpg-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cnpg-manager
+subjects:
+- kind: ServiceAccount
+  name: cnpg-manager
+  namespace: cnpg-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cnpg-controller-manager
+  namespace: cnpg-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudnative-pg
+    spec:
+      serviceAccountName: cnpg-manager
+      containers:
+      - name: manager
+        image: ghcr.io/cloudnative-pg/cloudnative-pg:1.22.0
+        command:
+        - /manager
+        args:
+        - controller
+        - --enable-leader-election
+        - --config-map-name=cnpg-controller-manager-config
+        - --secret-name=cnpg-controller-manager-config
+        env:
+        - name: OPERATOR_IMAGE_NAME
+          value: ghcr.io/cloudnative-pg/cloudnative-pg:1.22.0
+        - name: OPERATOR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          limits:
+            cpu: 100m
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+---
+# ConfigMap for operator configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-controller-manager-config
+  namespace: cnpg-system
+data:
+  # Empty for now, can be used for advanced config
+  config: |
+    {}

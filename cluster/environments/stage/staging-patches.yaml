@@ -1,0 +1,29 @@
+# Staging-specific patches
+# Lower resources, enable debugging
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-blue
+  namespace: stage
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: wordpress
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        env:
+        - name: WP_CACHE
+          value: "false"
+        - name: WP_DEBUG
+          value: "true"  # Enable debugging in staging
+        - name: WP_DEBUG_LOG
+          value: "true"

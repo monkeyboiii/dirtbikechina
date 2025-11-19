@@ -1,0 +1,129 @@
+# Database RBAC Configuration (PostgreSQL & MySQL)
+#
+# Databases need minimal permissions:
+# - Read their own ConfigMaps (tuning parameters)
+# - Read their own Secrets (passwords, certificates)
+# - NO write permissions, NO access to other namespaces
+
+---
+# PostgreSQL ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres
+  namespace: infra
+  labels:
+    app: postgres
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: postgres-role
+  namespace: infra
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+# Note: Databases should NOT have permissions to create/modify resources
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: postgres-rolebinding
+  namespace: infra
+subjects:
+- kind: ServiceAccount
+  name: postgres
+  namespace: infra
+roleRef:
+  kind: Role
+  name: postgres-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# MySQL ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mysql
+  namespace: infra
+  labels:
+    app: mysql
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mysql-role
+  namespace: infra
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mysql-rolebinding
+  namespace: infra
+subjects:
+- kind: ServiceAccount
+  name: mysql
+  namespace: infra
+roleRef:
+  kind: Role
+  name: mysql-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Backup Jobs ServiceAccount (needs more permissions)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database-backup
+  namespace: infra
+  labels:
+    app: backup
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: database-backup-role
+  namespace: infra
+rules:
+# Read database secrets (for connection credentials)
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+# Read ConfigMaps (for backup configuration)
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+# Read/write PVCs (for backup storage)
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list"]
+# Read pods (for exec into database pods if needed)
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: database-backup-rolebinding
+  namespace: infra
+subjects:
+- kind: ServiceAccount
+  name: database-backup
+  namespace: infra
+roleRef:
+  kind: Role
+  name: database-backup-role
+  apiGroup: rbac.authorization.k8s.io

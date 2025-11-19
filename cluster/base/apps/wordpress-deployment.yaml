@@ -1,0 +1,182 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wordpress-uploads-ini
+  namespace: prod
+data:
+  uploads.ini: |
+    file_uploads = On
+    memory_limit = 256M
+    upload_max_filesize = 10M
+    post_max_size = 15M
+    max_execution_time = 600
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-files
+  namespace: prod
+spec:
+  accessModes:
+  - ReadWriteMany  # Multiple pods can mount (requires NFS or Longhorn RWX)
+  storageClassName: longhorn-fast
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-blue
+  namespace: prod
+  labels:
+    app: wordpress
+    version: blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wordpress
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        version: blue
+    spec:
+      # Use dedicated ServiceAccount with minimal RBAC permissions
+      serviceAccountName: wordpress
+
+      # Security: Run as non-root user
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33  # www-data user in WordPress image
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - wordpress
+              topologyKey: kubernetes.io/hostname
+
+      containers:
+      - name: wordpress
+        image: wordpress:latest
+
+        # Container-level security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # WordPress needs write access to temp dirs
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE  # Bind to port 80
+        ports:
+        - containerPort: 80
+          name: http
+
+        env:
+        - name: WP_HOME
+          value: "https://www.dirtbikechina.com"
+        - name: WP_SITEURL
+          value: "https://www.dirtbikechina.com"
+        - name: WORDPRESS_DB_HOST
+          value: "mysql-primary.infra.svc.cluster.local:3306"
+        - name: WORDPRESS_DB_NAME
+          value: "wordpress"
+        - name: WORDPRESS_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: mysql-credentials
+              key: username
+        - name: WORDPRESS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-credentials
+              key: password
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+
+        volumeMounts:
+        - name: wordpress-files
+          mountPath: /var/www/html
+        - name: uploads-ini
+          mountPath: /usr/local/etc/php/conf.d/uploads.ini
+          subPath: uploads.ini
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+
+      volumes:
+      - name: wordpress-files
+        persistentVolumeClaim:
+          claimName: wordpress-files
+      - name: uploads-ini
+        configMap:
+          name: wordpress-uploads-ini
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  namespace: prod
+  labels:
+    app: wordpress
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  selector:
+    app: wordpress
+    version: blue  # Switch to 'green' for blue-green deployment
+---
+# Blue service (for internal testing before switch)
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-blue
+  namespace: prod
+  labels:
+    app: wordpress
+    version: blue
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  selector:
+    app: wordpress
+    version: blue
