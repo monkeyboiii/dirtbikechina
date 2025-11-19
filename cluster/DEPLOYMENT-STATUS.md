@@ -288,20 +288,52 @@ All criteria must be met to proceed to Phase 1:
 
 ## Next Steps
 
-### Immediate Actions
+### Option 1: Local Single-Node Testing (Recommended First Step) ✅
+
+**Before provisioning production infrastructure**, test everything on a local single-node k3s cluster:
+
+- **Guide**: `cluster/LOCAL-TEST-ENVIRONMENT.md` (Complete step-by-step instructions)
+- **Cost**: $0 (use existing hardware) or $5-40/month (VPS)
+- **Time**: 2-4 hours setup, 1 week full testing
+- **Benefits**:
+  - ✅ Validate all manifests work correctly
+  - ✅ Test security hardening (SealedSecrets, RBAC, NetworkPolicies)
+  - ✅ Verify CloudNativePG, observability stack
+  - ✅ Learn k8s without production pressure
+  - ✅ Find issues before spending on production infrastructure
+
+**Quick Start**:
+```bash
+# Install k3s (single node)
+curl -sfL https://get.k3s.io | sh -s - server --write-kubeconfig-mode=644
+
+# Deploy and test
+cd cluster
+./scripts/deploy.sh --environment dev --profile minimal
+```
+
+See `cluster/LOCAL-TEST-ENVIRONMENT.md` for complete instructions.
+
+---
+
+### Option 2: Production Infrastructure Deployment
+
+**After successful local testing**, provision production infrastructure:
+
 1. **Provision infrastructure**
-   - 3 VPS nodes (or 1 for testing)
+   - 3 VPS nodes for production HA
    - Minimum: 4GB RAM, 2 CPU, 40GB disk per node
    - Recommended: 8GB RAM, 4 CPU, 100GB SSD per node
 
 2. **Configure DNS**
-   - Point `*.dirtbikechina.com` to master node IP
-   - Or use `/etc/hosts` for local testing
+   - Point `*.dirtbikechina.com` to cluster load balancer
+   - Or use specific IPs for each subdomain
 
 3. **Prepare credentials**
-   - Database passwords
-   - SMTP credentials
+   - Database passwords (avoid special chars for PostgreSQL URLs)
+   - SMTP credentials for Discourse
    - S3/B2 credentials for backups
+   - GitHub PAT for private Discourse plugin
 
 ### Week 1: Start Deployment
 Follow the detailed checklist in `cluster/PHASE-0-READINESS.md`

@@ -42,13 +42,42 @@ cluster/
 
 ## Quick Start
 
-### Prerequisites
+### 🚀 New to k8s? Start with Local Testing!
 
-1. **k3s cluster** with 3 nodes (or single-node for testing)
+**Before deploying to production**, we **strongly recommend** testing on a local single-node k3s cluster:
+
+👉 **See `LOCAL-TEST-ENVIRONMENT.md`** for complete step-by-step instructions
+
+**Benefits**:
+- ✅ Zero cost (use existing hardware)
+- ✅ Learn k8s safely
+- ✅ Validate all manifests work
+- ✅ Test security, HA, observability
+- ✅ Find issues before production
+
+**Quick Local Setup**:
+```bash
+# Install k3s (single node)
+curl -sfL https://get.k3s.io | sh -s - server --write-kubeconfig-mode=644
+
+# Deploy and test
+cd cluster
+./scripts/deploy.sh --environment dev --profile minimal
+```
+
+---
+
+### Production Prerequisites
+
+For **production 3-node deployment** (after successful local testing):
+
+1. **k3s cluster** with 3 master nodes (HA control plane)
 2. **kubectl** configured to access the cluster
 3. **Longhorn** storage provider installed (or alternative like NFS)
-4. **Traefik** ingress controller (default with k3s)
-5. **cert-manager** for SSL certificates
+4. **Traefik** ingress controller with A/B testing support
+5. **cert-manager** for automatic SSL certificates
+6. **CloudNativePG operator** for PostgreSQL HA
+7. **SealedSecrets controller** for encrypted secret management
 
 ### Installation Steps
 
