@@ -1,0 +1,202 @@
+# Trivy Image Vulnerability Scanning Workflow
+#
+# Scans all custom Docker images for security vulnerabilities
+# Fails the build if HIGH or CRITICAL vulnerabilities are found
+
+name: Trivy Security Scan
+
+on:
+  push:
+    branches: [ main, 'claude/**' ]
+    paths:
+      - 'discourse.Dockerfile'
+      - 'submodules/pg_cjk_parser/**'
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run weekly scan (Mondays at 2 AM UTC)
+    - cron: '0 2 * * 1'
+  workflow_dispatch:  # Manual trigger
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  scan-postgres-cjk:
+    name: Scan PostgreSQL CJK Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # For GitHub Security tab
+      packages: write  # For pushing to GHCR
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive  # Include pg_cjk_parser submodule
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build PostgreSQL CJK image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./submodules/pg_cjk_parser
+        file: ./discourse.Dockerfile
+        tags: dirtbikechina/postgres:15-cjk
+        load: true  # Load into Docker daemon for scanning
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'dirtbikechina/postgres:15-cjk'
+        format: 'sarif'
+        output: 'trivy-postgres-results.sarif'
+        severity: 'CRITICAL,HIGH'
+        exit-code: '1'  # Fail if vulnerabilities found
+
+    - name: Upload Trivy results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()  # Upload even if scan fails
+      with:
+        sarif_file: 'trivy-postgres-results.sarif'
+        category: 'postgres-cjk-image'
+
+    - name: Run Trivy in table format (for logs)
+      uses: aquasecurity/trivy-action@master
+      if: always()
+      with:
+        image-ref: 'dirtbikechina/postgres:15-cjk'
+        format: 'table'
+        severity: 'CRITICAL,HIGH,MEDIUM'
+
+    - name: Generate vulnerability report
+      if: failure()
+      run: |
+        echo "## 🔴 Security vulnerabilities found in PostgreSQL CJK image" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Please review the Security tab for details." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Action required**: Fix HIGH/CRITICAL vulnerabilities before deploying." >> $GITHUB_STEP_SUMMARY
+
+  scan-base-images:
+    name: Scan Base Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    strategy:
+      matrix:
+        image:
+          - wordpress:latest
+          - mysql:latest
+          - ghcr.io/logto-io/logto:latest
+          - getmeili/meilisearch:v1.16.0
+          - flomp/wanderer-db:latest
+          - flomp/wanderer-web:latest
+          - caddy:latest
+
+    steps:
+    - name: Run Trivy scanner on ${{ matrix.image }}
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ matrix.image }}
+        format: 'sarif'
+        output: 'trivy-${{ matrix.image }}-results.sarif'
+        severity: 'CRITICAL,HIGH'
+        exit-code: '0'  # Don't fail on base images (just report)
+
+    - name: Upload results for ${{ matrix.image }}
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-${{ matrix.image }}-results.sarif'
+        category: ${{ matrix.image }}
+
+    - name: Print summary for ${{ matrix.image }}
+      uses: aquasecurity/trivy-action@master
+      if: always()
+      with:
+        image-ref: ${{ matrix.image }}
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+
+  scan-filesystem:
+    name: Scan Repository for Secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy secret scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-secrets-results.sarif'
+        scanners: 'secret'
+        exit-code: '1'  # Fail if secrets found
+
+    - name: Upload secret scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-secrets-results.sarif'
+        category: 'secrets'
+
+    - name: Check for exposed secrets
+      if: failure()
+      run: |
+        echo "## ⚠️ Potential secrets detected in repository" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**CRITICAL**: Remove any exposed secrets immediately!" >> $GITHUB_STEP_SUMMARY
+        echo "1. Revoke exposed credentials" >> $GITHUB_STEP_SUMMARY
+        echo "2. Remove from Git history (git filter-branch or BFG Repo-Cleaner)" >> $GITHUB_STEP_SUMMARY
+        echo "3. Force push to remote" >> $GITHUB_STEP_SUMMARY
+
+  scan-k8s-manifests:
+    name: Scan Kubernetes Manifests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy misconfiguration scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        scan-ref: 'cluster/'
+        format: 'sarif'
+        output: 'trivy-k8s-results.sarif'
+        exit-code: '0'  # Warning only (don't fail)
+        severity: 'CRITICAL,HIGH,MEDIUM'
+
+    - name: Upload K8s scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-k8s-results.sarif'
+        category: 'kubernetes-manifests'
+
+    - name: Print K8s misconfigurations
+      uses: aquasecurity/trivy-action@master
+      if: always()
+      with:
+        scan-type: 'config'
+        scan-ref: 'cluster/'
+        format: 'table'
+        severity: 'CRITICAL,HIGH,MEDIUM'

@@ -1,0 +1,214 @@
+# Discourse Database Initialization for CloudNativePG
+#
+# This job creates the Discourse database and sets up the CJK parser configuration.
+# It should be run after the CloudNativePG cluster is ready.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: discourse-init-script-cnpg
+  namespace: infra
+data:
+  discourse_init.sh: |
+    #!/usr/bin/env sh
+    set -Eeuo pipefail
+
+    # Connection to CloudNativePG primary
+    PGHOST="${PGHOST:-postgres-primary}"
+    PGPORT="${PGPORT:-5432}"
+    PGUSER="${PGUSER:-postgres}"
+    PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
+
+    DISCOURSE_DB_NAME="${DISCOURSE_DB_NAME:-discourse}"
+    DISCOURSE_DB_USER="${DISCOURSE_DB_USER:-discourse}"
+    : "${DISCOURSE_DB_PASSWORD:?set DISCOURSE_DB_PASSWORD}"
+
+    # Helpers
+    psql_super() { PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -v ON_ERROR_STOP=1 -qtA "$@"; }
+    psql_db()    { PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$DISCOURSE_DB_NAME" -v ON_ERROR_STOP=1 -qtA "$@"; }
+
+    echo "=== Starting Discourse Database Initialization for CloudNativePG ==="
+
+    # Create role if not exists
+    if ! psql_super -c "SELECT 1 FROM pg_roles WHERE rolname='${DISCOURSE_DB_USER}'" | grep -q 1; then
+      echo "Creating role ${DISCOURSE_DB_USER}..."
+      psql_super -c "CREATE ROLE ${DISCOURSE_DB_USER} LOGIN PASSWORD '${DISCOURSE_DB_PASSWORD}'"
+    else
+      echo "Role ${DISCOURSE_DB_USER} already exists"
+    fi
+
+    # Create database if not exists
+    if ! psql_super -c "SELECT 1 FROM pg_database WHERE datname='${DISCOURSE_DB_NAME}'" | grep -q 1; then
+      echo "Creating database ${DISCOURSE_DB_NAME}..."
+      psql_super -c "CREATE DATABASE ${DISCOURSE_DB_NAME} OWNER ${DISCOURSE_DB_USER} ENCODING 'UTF8'"
+    else
+      echo "Database ${DISCOURSE_DB_NAME} already exists"
+    fi
+
+    # Install extensions (hstore, pg_trgm, vector already installed by cluster bootstrap)
+    echo "Installing required extensions..."
+    for ext in hstore pg_trgm vector pg_cjk_parser; do
+      psql_db -c "CREATE EXTENSION IF NOT EXISTS ${ext};" || {
+        echo "ERROR: extension ${ext} not available" >&2
+        exit 1
+      }
+    done
+
+    # Update pgvector if available
+    psql_db -c "ALTER EXTENSION vector UPDATE;" || true
+
+    # Create CJK parser configuration
+    echo "Setting up CJK text search configuration..."
+    psql_db <<'SQL'
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_ts_parser WHERE prsname='pg_cjk_parser') THEN
+        CREATE TEXT SEARCH PARSER public.pg_cjk_parser (
+          START = prsd2_cjk_start,
+          GETTOKEN = prsd2_cjk_nexttoken,
+          END = prsd2_cjk_end,
+          LEXTYPES = prsd2_cjk_lextype,
+          HEADLINE = prsd2_cjk_headline
+        );
+      END IF;
+    END $$;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname='config_2_gram_cjk') THEN
+        CREATE TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ( PARSER = pg_cjk_parser );
+
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR asciihword WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR cjk WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR email WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR asciiword WITH english_stem;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR entity WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR file WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR float WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR host WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR hword WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR hword_asciipart WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR hword_numpart WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR hword_part WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR int WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR numhword WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR numword WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR protocol WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR sfloat WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR tag WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR uint WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR url WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR url_path WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR version WITH simple;
+        ALTER TEXT SEARCH CONFIGURATION public.config_2_gram_cjk ADD MAPPING FOR word WITH simple;
+      END IF;
+    END $$;
+    SQL
+
+    # Set as default for Discourse database
+    echo "Setting CJK config as default for ${DISCOURSE_DB_NAME}..."
+    psql_super -c "ALTER DATABASE ${DISCOURSE_DB_NAME} SET default_text_search_config = 'public.config_2_gram_cjk';"
+
+    # Run CJK parser smoke tests
+    echo "Running CJK parser smoke tests..."
+
+    # Test 1: Japanese/Chinese
+    OUTPUT=$(psql_db -At -c "
+    SET default_text_search_config = 'public.config_2_gram_cjk';
+    WITH v AS (
+      SELECT to_tsvector('Doraemnon Nobita「ドラえもん のび太の牧場物語」多拉A梦 野比大雄χΨψΩω') AS tv
+    )
+    SELECT (tv @@ plainto_tsquery('のび太')) AND (tv @@ plainto_tsquery('野比大雄')) FROM v;
+    ")
+    echo "CJK JP/CN test: $OUTPUT"
+    if ! echo "$OUTPUT" | grep -q "^t$"; then
+      echo "ERROR: Chinese/Japanese 2-gram parser test FAILED" >&2
+      exit 1
+    fi
+
+    # Test 2: Korean
+    OUTPUT=$(psql_db -At -c "
+    SET default_text_search_config = 'public.config_2_gram_cjk';
+    WITH v AS (
+      SELECT to_tsvector('大韩민국개인정보의 수집 및 이용 목적(「개인정보 보호법」 제15조)') AS tv
+    )
+    SELECT tv @@ plainto_tsquery('大韩민국개인정보') FROM v;
+    ")
+    echo "CJK KR test: $OUTPUT"
+    if ! echo "$OUTPUT" | grep -q "^t$"; then
+      echo "ERROR: Korean 2-gram parser test FAILED" >&2
+      exit 1
+    fi
+
+    echo "✅ All CJK parser smoke tests passed successfully!"
+    echo "✅ Discourse DB '${DISCOURSE_DB_NAME}' ready with CloudNativePG"
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: discourse-init-cnpg
+  namespace: infra
+  labels:
+    app: discourse-init
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: discourse-init
+    spec:
+      restartPolicy: OnFailure
+
+      # Wait for CloudNativePG cluster to be ready
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z postgres-primary 5432; do
+            echo "Waiting for PostgreSQL primary..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+
+      containers:
+      - name: discourse-init
+        image: postgres:15-alpine
+        command: ["sh", "/script/discourse_init.sh"]
+
+        env:
+        - name: PGHOST
+          value: "postgres-primary"
+        - name: PGPORT
+          value: "5432"
+        - name: PGUSER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-cluster-superuser
+              key: password
+        - name: DISCOURSE_DB_NAME
+          value: "discourse"
+        - name: DISCOURSE_DB_USER
+          value: "discourse"
+        - name: DISCOURSE_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: discourse-credentials
+              key: db-password
+
+        volumeMounts:
+        - name: init-script
+          mountPath: /script
+          readOnly: true
+
+      volumes:
+      - name: init-script
+        configMap:
+          name: discourse-init-script-cnpg
+          defaultMode: 0755

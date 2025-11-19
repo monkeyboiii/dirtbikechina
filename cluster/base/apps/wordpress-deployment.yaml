@@ -44,6 +44,18 @@ spec:
         app: wordpress
         version: blue
     spec:
+      # Use dedicated ServiceAccount with minimal RBAC permissions
+      serviceAccountName: wordpress
+
+      # Security: Run as non-root user
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33  # www-data user in WordPress image
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
+
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -60,6 +72,16 @@ spec:
       containers:
       - name: wordpress
         image: wordpress:latest
+
+        # Container-level security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # WordPress needs write access to temp dirs
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE  # Bind to port 80
         ports:
         - containerPort: 80
           name: http

@@ -1,0 +1,165 @@
+# RBAC for Application Services (Logto, Discourse, Wanderer, PHPMyAdmin)
+#
+# Each service gets minimal permissions needed to function
+
+---
+# Logto ServiceAccount (all environments)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: logto
+  namespace: prod
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: logto-role
+  namespace: prod
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: logto-rolebinding
+  namespace: prod
+subjects:
+- kind: ServiceAccount
+  name: logto
+  namespace: prod
+roleRef:
+  kind: Role
+  name: logto-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Discourse ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: discourse
+  namespace: prod
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: discourse-role
+  namespace: prod
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+# Discourse may need to read services for plugin discovery
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: discourse-rolebinding
+  namespace: prod
+subjects:
+- kind: ServiceAccount
+  name: discourse
+  namespace: prod
+roleRef:
+  kind: Role
+  name: discourse-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Wanderer (Meilisearch, PocketBase, Svelte)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wanderer
+  namespace: prod
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wanderer-role
+  namespace: prod
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wanderer-rolebinding
+  namespace: prod
+subjects:
+- kind: ServiceAccount
+  name: wanderer
+  namespace: prod
+roleRef:
+  kind: Role
+  name: wanderer-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# PHPMyAdmin ServiceAccount (very restricted)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: phpmyadmin
+  namespace: prod
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: phpmyadmin-role
+  namespace: prod
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+  # Only allow reading specific MySQL secret
+  resourceNames: ["mysql-credentials"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: phpmyadmin-rolebinding
+  namespace: prod
+subjects:
+- kind: ServiceAccount
+  name: phpmyadmin
+  namespace: prod
+roleRef:
+  kind: Role
+  name: phpmyadmin-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Replicate for staging namespace
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: logto
+  namespace: stage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: logto-role
+  namespace: stage
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: logto-rolebinding
+  namespace: stage
+subjects:
+- kind: ServiceAccount
+  name: logto
+  namespace: stage
+roleRef:
+  kind: Role
+  name: logto-role
+  apiGroup: rbac.authorization.k8s.io

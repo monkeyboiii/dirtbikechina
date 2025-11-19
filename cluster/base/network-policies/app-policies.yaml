@@ -1,0 +1,402 @@
+# Application Network Policies
+#
+# Allow ingress from ingress controller and egress to databases
+
+---
+# WordPress - Allow from ingress, egress to MySQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wordpress-policy
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: wordpress
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from Traefik/ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-system
+    ports:
+    - protocol: TCP
+      port: 80
+
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # MySQL database
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          environment: infrastructure
+      podSelector:
+        matchLabels:
+          app: mysql
+    ports:
+    - protocol: TCP
+      port: 3306
+
+  # External HTTPS (for WordPress updates, plugins, themes)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# Discourse - Allow from ingress, egress to PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: discourse-policy
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: discourse
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-system
+    ports:
+    - protocol: TCP
+      port: 3000  # HTTP mode (not Unix socket)
+
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # PostgreSQL
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          environment: infrastructure
+      podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+
+  # Logto SSO (cross-namespace)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          environment: production
+      podSelector:
+        matchLabels:
+          app: logto
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  # External HTTPS (SMTP, CDN, plugins)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 587  # SMTP
+    - protocol: TCP
+      port: 465  # SMTPS
+
+---
+# Logto - Allow from ingress and Discourse, egress to PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: logto-policy
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: logto
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-system
+    ports:
+    - protocol: TCP
+      port: 3001  # Main endpoint
+    - protocol: TCP
+      port: 3002  # Admin endpoint
+
+  # Allow from Discourse (for SSO callbacks)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: discourse
+    ports:
+    - protocol: TCP
+      port: 3001
+
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # PostgreSQL
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          environment: infrastructure
+      podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+
+  # External HTTPS (OAuth providers, email verification)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Wanderer (Meilisearch + PocketBase + Svelte)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wanderer-meilisearch-policy
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: wanderer
+      component: meilisearch
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from PocketBase
+  - from:
+    - podSelector:
+        matchLabels:
+          app: wanderer
+          component: pocketbase
+    ports:
+    - protocol: TCP
+      port: 7700
+
+  # Allow from Svelte
+  - from:
+    - podSelector:
+        matchLabels:
+          app: wanderer
+          component: svelte
+    ports:
+    - protocol: TCP
+      port: 7700
+
+  egress:
+  # DNS only
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wanderer-pocketbase-policy
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: wanderer
+      component: pocketbase
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from Svelte
+  - from:
+    - podSelector:
+        matchLabels:
+          app: wanderer
+          component: svelte
+    ports:
+    - protocol: TCP
+      port: 8090
+
+  # Allow from ingress (admin interface)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-system
+    ports:
+    - protocol: TCP
+      port: 8090
+
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # Meilisearch
+  - to:
+    - podSelector:
+        matchLabels:
+          app: wanderer
+          component: meilisearch
+    ports:
+    - protocol: TCP
+      port: 7700
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wanderer-svelte-policy
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: wanderer
+      component: svelte
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-system
+    ports:
+    - protocol: TCP
+      port: 3000
+
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # PocketBase
+  - to:
+    - podSelector:
+        matchLabels:
+          app: wanderer
+          component: pocketbase
+    ports:
+    - protocol: TCP
+      port: 8090
+
+  # Meilisearch
+  - to:
+    - podSelector:
+        matchLabels:
+          app: wanderer
+          component: meilisearch
+    ports:
+    - protocol: TCP
+      port: 7700
+
+  # External APIs (Valhalla, Nominatim)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# PHPMyAdmin - Very restricted
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: phpmyadmin-policy
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: phpmyadmin
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Only from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-system
+    ports:
+    - protocol: TCP
+      port: 80
+
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # MySQL only
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          environment: infrastructure
+      podSelector:
+        matchLabels:
+          app: mysql
+    ports:
+    - protocol: TCP
+      port: 3306
+
+  # No external internet access for PHPMyAdmin

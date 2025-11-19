@@ -1,0 +1,253 @@
+# PostgreSQL Cluster using CloudNativePG
+#
+# Provides:
+# - High Availability with automatic failover
+# - Streaming replication across 3 instances
+# - Point-in-time recovery (PITR)
+# - Automated backups to S3/B2
+# - Read replicas
+# - Custom image with CJK parser support
+
+---
+# PostgreSQL Configuration (tuning parameters)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: infra
+data:
+  custom.conf: |
+    # Connection Settings
+    max_connections = 200
+    superuser_reserved_connections = 3
+
+    # Memory Settings
+    shared_buffers = 2GB              # 25% of RAM (assuming 8GB node)
+    effective_cache_size = 6GB        # 75% of RAM
+    work_mem = 10MB                    # Per-operation memory
+    maintenance_work_mem = 512MB      # For VACUUM, CREATE INDEX
+
+    # WAL Settings (for replication and PITR)
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 1GB
+
+    # Checkpoint Settings
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+
+    # Query Planning
+    default_statistics_target = 100
+    random_page_cost = 1.1            # SSD optimized
+    effective_io_concurrency = 200    # SSD parallelism
+
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_rotation_age = 1d
+    log_rotation_size = 100MB
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_timezone = 'UTC'
+    log_min_duration_statement = 1000  # Log slow queries (>1s)
+
+    # CJK Text Search
+    default_text_search_config = 'public.config_2_gram_cjk'
+
+    # Performance
+    shared_preload_libraries = 'pg_stat_statements'
+
+---
+# Cluster definition
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-cluster
+  namespace: infra
+spec:
+  # High availability with 3 instances
+  instances: 3
+
+  # Custom PostgreSQL image with CJK parser
+  imageName: dirtbikechina/postgres:15-cjk
+
+  # Storage configuration
+  storage:
+    size: 50Gi
+    storageClass: longhorn-retain
+
+  # Bootstrap configuration
+  bootstrap:
+    initdb:
+      database: logto
+      owner: postgres
+      # Run custom init script for CJK parser setup
+      postInitApplicationSQL:
+      - CREATE EXTENSION IF NOT EXISTS hstore;
+      - CREATE EXTENSION IF NOT EXISTS pg_trgm;
+      - CREATE EXTENSION IF NOT EXISTS vector;
+      - CREATE EXTENSION IF NOT EXISTS pg_cjk_parser;
+
+  # PostgreSQL configuration from ConfigMap
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "2GB"
+      effective_cache_size: "6GB"
+      work_mem: "10MB"
+      maintenance_work_mem: "512MB"
+      wal_level: "replica"
+      max_wal_senders: "10"
+      checkpoint_completion_target: "0.9"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      default_text_search_config: "public.config_2_gram_cjk"
+
+    # Include additional config from ConfigMap
+    pg_hba:
+    - host all all all md5
+
+  # Monitoring
+  monitoring:
+    enablePodMonitor: true  # For Prometheus
+
+  # Resources per instance
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+  # Automatic failover configuration
+  failoverDelay: 0  # Immediate failover
+  switchoverDelay: 60  # 60s for planned switchover
+
+  # Affinity: spread instances across nodes
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: cnpg.io/cluster
+              operator: In
+              values:
+              - postgres-cluster
+          topologyKey: kubernetes.io/hostname
+
+  # Point-in-Time Recovery configuration
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://dirtbikechina-postgres-backups/
+      s3Credentials:
+        accessKeyId:
+          name: postgres-backup-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: postgres-backup-credentials
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+        encryption: AES256
+      data:
+        compression: gzip
+        encryption: AES256
+        jobs: 2  # Parallel backup jobs
+
+    # Retention policy
+    retentionPolicy: "30d"  # Keep backups for 30 days
+
+---
+# Scheduled backup (daily at 3 AM)
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: postgres-daily-backup
+  namespace: infra
+spec:
+  schedule: "0 3 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: postgres-cluster
+  method: barmanObjectStore
+
+---
+# Service for applications to connect (points to primary)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: infra
+  labels:
+    cnpg.io/cluster: postgres-cluster
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    cnpg.io/cluster: postgres-cluster
+    role: primary
+
+---
+# Service for read-only queries (points to replicas)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-read
+  namespace: infra
+  labels:
+    cnpg.io/cluster: postgres-cluster
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    cnpg.io/cluster: postgres-cluster
+    role: replica
+
+---
+# Service for any instance (for administrative tasks)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-any
+  namespace: infra
+  labels:
+    cnpg.io/cluster: postgres-cluster
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    cnpg.io/cluster: postgres-cluster
+
+---
+# Monitoring: PodMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgres-cluster
+  namespace: infra
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: postgres-cluster
+  podMetricsEndpoints:
+  - port: metrics

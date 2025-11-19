@@ -49,6 +49,18 @@ spec:
         app: postgres
         role: primary  # Updated by Patroni/Stolon in HA setup
     spec:
+      # Use dedicated ServiceAccount
+      serviceAccountName: postgres
+
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999  # postgres user
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+
       # Anti-affinity: spread across nodes
       affinity:
         podAntiAffinity:
